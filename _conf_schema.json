@@ -1,0 +1,114 @@
+{
+    "blog_url": {
+        "description": "博客地址",
+        "type": "string",
+        "hint": "你的博客首页地址，例如 https://blog.example.com 。插件会往这个地址 POST 发表请求。",
+        "obvious_hint": true,
+        "default": ""
+    },
+    "timecode": {
+        "description": "时光机验证编码",
+        "type": "string",
+        "hint": "主题设置里的「时光机验证编码」。它等同于你博客的发帖权限，请勿泄露。",
+        "obvious_hint": true,
+        "secret": true,
+        "default": ""
+    },
+    "cid": {
+        "description": "时光机 cid",
+        "type": "int",
+        "hint": "时光机所在分类/独立页面的 cid。",
+        "obvious_hint": true,
+        "default": 0,
+        "slider": {
+            "min": 0,
+            "max": 10000,
+            "step": 1
+        }
+    },
+    "token_mode": {
+        "description": "token 模式",
+        "type": "string",
+        "hint": "决定验证编码的哈希算法。主题端按 token 分流校验：Chrome 插件用裸 md5，微信公众号版加了盐。不确定就保持 auto，插件会自己试出来。",
+        "obvious_hint": true,
+        "options": [
+            "auto",
+            "crx",
+            "weixin"
+        ],
+        "default": "auto"
+    },
+    "upload_mode": {
+        "description": "图片上传方式",
+        "type": "string",
+        "hint": "base64：插件先下载并压缩图片再上传（推荐，不受图片外链防盗链影响）。url：直接把图片链接交给主题去下载。",
+        "obvious_hint": true,
+        "options": [
+            "base64",
+            "url"
+        ],
+        "default": "base64"
+    },
+    "image_max_edge": {
+        "description": "图片长边上限（像素）",
+        "type": "int",
+        "hint": "超过这个尺寸的图片会被等比缩小后再上传。",
+        "obvious_hint": true,
+        "default": 2560,
+        "slider": {
+            "min": 640,
+            "max": 4096,
+            "step": 64
+        }
+    },
+    "max_image_mb": {
+        "description": "单张图片体积上限（MB）",
+        "type": "int",
+        "hint": "压缩后仍超过这个体积就拒绝发送。PHP 默认 post_max_size 是 8M，不建议超过 6。",
+        "obvious_hint": true,
+        "default": 5,
+        "slider": {
+            "min": 1,
+            "max": 8,
+            "step": 1
+        }
+    },
+    "buffer_timeout": {
+        "description": "连续发送超时（秒）",
+        "type": "int",
+        "hint": "开启连续发送后，超过这个时间没有新消息就自动放弃本轮内容。",
+        "obvious_hint": true,
+        "default": 300,
+        "slider": {
+            "min": 30,
+            "max": 3600,
+            "step": 30
+        }
+    },
+    "buffer_max_items": {
+        "description": "连续发送条数上限",
+        "type": "int",
+        "hint": "一轮连续发送最多攒多少条（文字/图片各算一条）。",
+        "obvious_hint": true,
+        "default": 50,
+        "slider": {
+            "min": 2,
+            "max": 200,
+            "step": 1
+        }
+    },
+    "proxy": {
+        "description": "请求代理地址",
+        "type": "string",
+        "hint": "访问博客时使用的代理，例如 http://127.0.0.1:7890 。留空则直连。",
+        "obvious_hint": true,
+        "default": ""
+    },
+    "verify_ssl": {
+        "description": "是否验证 HTTPS 证书",
+        "type": "bool",
+        "hint": "如果博客证书有问题（自签名、过期），可关掉，但不推荐。",
+        "obvious_hint": true,
+        "default": true
+    }
+}

@@ -1,0 +1,6 @@
+name: astrbot_plugin_time_machine
+desc: 时光机发布插件 —— 在聊天里直接发 Handsome 主题的时光机说说，支持文字、图片、连续多条图文混排
+help: https://github.com/xiaobailoves/astrbot_plugin_time_machine
+version: v1.0.0
+author: Xiaobailoves
+repo: https://github.com/xiaobailoves/astrbot_plugin_time_machine
