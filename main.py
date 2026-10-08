@@ -85,6 +85,9 @@ def _probe_conclusion(working: list[tuple[str, str]]) -> str:
     combos = "；".join(f"token={m} + {HASH_LABEL[h]}" for m, h in working)
     text = f"结论：主题接受 {combos}。"
 
+    # 两种 token 配同一种哈希都能过 → 主题根本不看 token，只看哈希
+    token_irrelevant = len({m for m, _ in working}) > 1 and len({h for _, h in working}) == 1
+
     if any(MODE_HASH.get(m) == h for m, h in working):
         text += "本插件正常工作在这个组合上。"
     else:
@@ -92,12 +95,23 @@ def _probe_conclusion(working: list[tuple[str, str]]) -> str:
 
     if (MODE_WEIXIN, HASH_SALTED) in working:
         text += " 微信服务端（wechat_for_handsome）发的正是这组，可以直接用。"
-    else:
+        return text
+
+    best_mode, best_hash = working[0]
+    hash_hint = f"time_code 换成{HASH_LABEL[best_hash]} 算出的值"
+
+    text += " 微信服务端（wechat_for_handsome）发的是「token=weixin + 加盐 md5」，"
+    if token_irrelevant:
         text += (
-            " 微信服务端（wechat_for_handsome）发的是「token=weixin + 加盐 md5」，"
-            "不在上面这些组合里，所以那条路目前走不通；"
-            f"想复活它，得把它的 cross.php 里的 token 改成 {working[0][0]}、"
-            f"time_code 换成{HASH_LABEL[working[0][1]]}那个值。"
+            "哈希对不上，所以那条路现在走不通；"
+            f"不过它用的 token 本身没问题（主题不看 token），所以只要把 cross.php 里的 {hash_hint}就行，token 不用动。"
+        )
+    else:
+        # 只有当微信服务端现在用的 token 和可用组合不一致时，才需要连着 token 一起改
+        token_part = f"token 改成 {best_mode}，" if best_mode != MODE_WEIXIN else ""
+        text += (
+            "不在上面这些组合里，所以那条路现在走不通；"
+            f"想复活它，得改它的 cross.php：{token_part}{hash_hint}。"
         )
     return text
 

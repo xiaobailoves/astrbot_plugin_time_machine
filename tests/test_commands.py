@@ -289,10 +289,19 @@ def test_probe_conclusion_flags_unsupported_combination():
 
 
 def test_probe_conclusion_names_the_fix_for_wechat_server():
+    """只有 crx 能过时，说明 token 有意义，微信那边要连 token 一起改"""
     text = main._probe_conclusion([("crx", "plain")])
     assert "cross.php" in text
     assert "token 改成 crx" in text
     assert "裸 md5" in text
+
+
+def test_probe_conclusion_says_token_does_not_matter_when_both_pass():
+    """两种 token 配同一种哈希都能过 → 主题只看哈希，别让人白改 token"""
+    text = main._probe_conclusion([("crx", "plain"), ("weixin", "plain")])
+    assert "主题不看 token" in text
+    assert "token 不用动" in text
+    assert "token 改成" not in text
 
 
 async def test_test_command_refuses_unconfigured():
