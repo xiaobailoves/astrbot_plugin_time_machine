@@ -134,13 +134,36 @@ upload_img:  action=upload_img time_code=<哈希>  token=<crx|weixin>
 
 ## 实测记录
 
-**Handsome 10.1.0（2025-03 构建）**：
+**Handsome 10.1.0（2025-03 构建）**，`/time_machine test` 的四种组合实测：
 
-- ✅ 通过的是 **`token=crx` + 裸 `md5(编码)`**，也就是官方 Chrome 插件那条路
-- ❌ `token=weixin` + 加盐哈希被拒——所以 **`wechat_for_handsome`（2022 年、针对 Handsome 5.x）
-  在这个主题版本上发不出东西**，它发的正是被拒的那一组
-- 上传图片用 `type` 参数即可（主题自己的前端用的是 `suffix`，两种它都认），
-  返回体是 `{"status":"1","data":"<图片URL>"}`
+```
+✅ token=crx    + 裸 md5      通过
+❌ token=crx    + 加盐 md5    身份校验失败（-3）
+✅ token=weixin + 裸 md5      通过
+❌ token=weixin + 加盐 md5    身份校验失败（-3）
+```
+
+读出来的结论：
+
+- **这个版本完全忽略 `token` 参数，只看哈希**：裸 `md5(编码)` 通过，加盐 `md5(盐+编码+盐)` 一律被拒
+- 官方 Chrome 插件天然可用；本插件的 `auto` 模式第一次尝试（`crx` + 裸 md5）就能命中
+- 上传图片用 `type` 参数即可（主题自己的前端用 `suffix`，两种都认），返回 `{"status":"1","data":"<URL>"}`
+- 主题 `libs/Utils.php` 里 `IsTimeCodeCorrect($input, $is_old)` 明明留了加盐分支，
+  但**调用它的代码在加密的 `CoreInterface.php` 里**，实测走的不是加盐那条
+
+**`wechat_for_handsome` 只差一行就能复活**：它把 time_code 算成了加盐值，改成裸 md5 即可 ——
+
+```php
+// cross.php 的 push() 里，原来：
+'time_code' => md5("handsome!@#$%^&*()-=+@#$%$" . $timecode . "handsome!@#$%^&*()-=+@#$%$@#$%^&*"),
+// 改成：
+'time_code' => md5($timecode),
+```
+
+`token` 不用动（本版本忽略它）。
+
+> 网上有篇 2023 年的教程（针对 Handsome 9.0.2）让改 `Time.php` 里 `IsTimeCodeCorrect` 的第二个参数。
+> **10.1.0 上别照着做**：`Time.php` 这个文件已经不存在，调用点在加密核心里，没有那一行可改。
 
 主题里 `libs/Utils.php` 的校验逻辑（未加密，可直接读）：
 
