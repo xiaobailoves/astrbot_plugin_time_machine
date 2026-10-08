@@ -361,6 +361,47 @@ async def test_collector_ignores_commands():
     await plugin.buffers.shutdown()
 
 
+async def test_collector_accepts_image_only_messages():
+    """纯图片消息的 message_str 是空的——之前会被当成命令静默丢掉"""
+    plugin = make_plugin()
+    plugin.client = FakeClient()
+    plugin.buffers.start(SESSION)
+    event = FakeEvent(
+        "", images=[FakeComp(file="http://cdn.example.com/a.jpg", payload=jpeg_bytes())]
+    )
+
+    out = await run(plugin.buffer_collector(event))
+
+    buf = plugin.buffers.get(SESSION)
+    assert buf.count == 1
+    assert buf.image_count == 1
+    assert "已记录 1 条" in texts(out)
+    await plugin.buffers.shutdown()
+
+
+async def test_collector_speaks_up_when_nothing_can_be_collected():
+    """收不到内容时必须出声，不能像以前那样静默消失"""
+    plugin = make_plugin()
+    plugin.buffers.start(SESSION)
+
+    out = await run(plugin.buffer_collector(FakeEvent("")))
+
+    assert "没找到可发送的内容" in texts(out)
+    assert "（空消息链）" in texts(out)
+    await plugin.buffers.shutdown()
+
+
+async def test_collector_reports_component_types_when_it_cannot_use_them():
+    """有组件但取不出图时，把组件类型报出来，好定位是适配器没带图还是插件没认出来"""
+    plugin = make_plugin()
+    plugin.buffers.start(SESSION)
+
+    out = await run(plugin.buffer_collector(FakeEvent("", images=[StubReply()])))
+
+    assert "_Reply" in texts(out)
+    await plugin.buffers.shutdown()
+
+
 async def test_collector_ignores_non_admin_messages():
     plugin = make_plugin()
     plugin.buffers.start(SESSION)

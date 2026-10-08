@@ -289,7 +289,9 @@ def test_strip_command_with_end_names():
         ("time_machine post x", True),
         ("tm start", True),
         ("今天天气不错", False),
-        ("", True),
+        # 空文本不是命令：纯图片消息的 message_str 就是空的，
+        # 判成命令会让图片被静默丢掉（真实踩过的坑）
+        ("", False),
     ],
 )
 def test_looks_like_command(text, expected):

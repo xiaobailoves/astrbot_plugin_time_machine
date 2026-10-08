@@ -117,9 +117,13 @@ def _probe_conclusion(working: list[tuple[str, str]]) -> str:
 
 
 def _looks_like_command(text: str) -> bool:
-    """判断一条消息是不是命令，连续发送时不该把它收进缓冲"""
+    """判断一条消息是不是命令，连续发送时不该把它收进缓冲。
+
+    注意：**空文本不算命令**。纯图片消息的 message_str 就是空的，
+    早期版本在这里返回 True，导致图片被当成命令丢掉、且没有任何提示。
+    """
     if not text:
-        return True
+        return False
     if text[0] in "/!！":
         return True
     return text.split(maxsplit=1)[0] in GROUP_NAMES
@@ -392,6 +396,13 @@ class TimeMachinePlugin(Star):
 
         images = self._collect_images(event)
         if not text and not images:
+            # 绝不能静默丢弃：纯图片消息最容易在这里出问题，
+            # 顺手把消息链里的组件类型报出来，方便定位是适配器没带图还是插件没认出来
+            kinds = "、".join(type(c).__name__ for c in event.get_messages()) or "（空消息链）"
+            event.stop_event()
+            yield event.plain_result(
+                f"⚠️ 这条消息里没找到可发送的内容，已跳过。消息链：{kinds}"
+            )
             return
 
         event.stop_event()
