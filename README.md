@@ -36,7 +36,7 @@
 | `/time_machine end` | 结束并把这一轮合并成**一条**图文混排说说 |
 | `/time_machine cancel` | 放弃这一轮攒的内容 |
 | `/time_machine status` | 查看配置（编码打码）、协商出的 token 模式、最近一次发送结果 |
-| `/time_machine test` | 探测身份校验方式，**不产生任何说说** |
+| `/time_machine test` | 把 token × 哈希四种组合各试一遍，看主题认哪种，**不产生任何说说** |
 | `/time_machine help` | 用法 |
 
 别名：`/tm`、`说说`、`开始`/`结束`/`取消`、`状态`、`测试`、`帮助`。
@@ -63,21 +63,27 @@
 
 ### 关于 token 模式
 
-主题端按请求里的 `token` 参数**分流校验**，两种客户端算法不同：
+主题端按请求里的 `token` 参数**分流校验**，同一个编码在不同客户端会算成不同的哈希：
 
-- `token=crx`：`md5(验证编码)` —— 官方 Chrome 插件用的
-- `token=weixin`：`md5(盐 + 验证编码 + 盐)` —— 微信公众号版用的，盐值硬编码在其源码里
+| token | 哈希算法 | 出处 |
+|---|---|---|
+| `crx` | `md5(验证编码)` | 官方 Chrome 插件 |
+| `weixin` | `md5(盐 + 验证编码 + 盐)` | 微信公众号版；Handsome 主题里 `Utils::md5()` 就是这个实现 |
 
-插件默认 `auto`：先试 `crx`，如果主题回 `-3`（身份校验失败）就自动换 `weixin` 再试一次，
-成功的那次会记到 `data/plugin_data/astrbot_plugin_time_machine/state.json` 里，之后固定用它。
+插件默认 `auto`：先试 `crx`，主题回 `-3`（身份校验失败）就换 `weixin` 再试，
+成功的那次记到 `data/plugin_data/astrbot_plugin_time_machine/state.json`，之后固定用它。
 
 > `-3` 表示校验没过、内容根本没入库，所以这个试探**不会往你博客里留下垃圾内容**。
-> 想确知结果，跑 `/time_machine test`。
+
+**`/time_machine test` 会把 token × 哈希的四种组合全试一遍**（各上传一张 1×1 空白图，
+不产生说说），直接告诉你主题到底认哪种。这个探测还能顺带回答「微信公众号那套还能不能用」：
+`wechat_for_handsome` 发的是 `token=weixin` + 加盐哈希，如果这组不在探测结果里，那条路就是断的，
+结论里会给出改法。
 
 ## 部署后验收清单
 
 1. `/time_machine status` —— 三行配置都读到了吗？验证编码显示为打码形式
-2. `/time_machine test` —— 看到 `✅ token=...` 就说明编码和地址都对。失败时把它给的原始响应贴出来对照下面的排错表
+2. `/time_machine test` —— 四种组合里出现 `✅` 就说明编码和地址都对。全是 `❌` 时先看排错表第一条（十有八九是编码还停在默认值）
 3. `/time_machine post 测试一下` —— 去博客时光机页面确认，然后删掉这条
 4. `/time_machine post #私密测试` —— 确认只有自己可见
 5. 发一张图试试（或回复一张图再 `post`）
@@ -89,7 +95,8 @@
 
 | 现象 | 多半是什么原因 |
 |---|---|
-| `-3 身份编码错误` | 验证编码填错了，或主题版本用的是另一种 token 模式。先跑 `test` |
+| **四种组合全是 `-3`** | **主题设置里的「时光机身份验证编码」还是空的、或还是默认值 `default`。**主题源码 `Utils.php` 里对这两个值直接 `return false`，任何编码、任何算法都必然失败。去 后台 → 外观 → 设置主题 填一个真实编码 |
+| `-3 身份编码错误` | 编码填错了（和主题设置里的不是同一个字符串，注意首尾空格），或主题用的是另一种 token/哈希组合。先跑 `test` |
 | `-2 信息缺失` | `cid` 没填，或这一版主题要求的参数名不一样 |
 | `-1 请求参数错误` | 主题版本和本插件假设的接口对不上（这套接口需要 Handsome 5.2.0+） |
 | `连接博客失败` / `请求超时` | 地址写错了、服务器不可达，或在服务器上需要走代理（填 `proxy`） |
@@ -125,6 +132,30 @@ upload_img:  action=upload_img time_code=<哈希>  token=<crx|weixin>
 [Chrome 插件](https://github.com/ihewro) 和 wechat_for_handsome 的源码逐条对拍过的
 （`tests/` 里有对应测试锁住）。
 
+## 实测记录
+
+**Handsome 10.1.0（2025-03 构建）**：
+
+- ✅ 通过的是 **`token=crx` + 裸 `md5(编码)`**，也就是官方 Chrome 插件那条路
+- ❌ `token=weixin` + 加盐哈希被拒——所以 **`wechat_for_handsome`（2022 年、针对 Handsome 5.x）
+  在这个主题版本上发不出东西**，它发的正是被拒的那一组
+- 上传图片用 `type` 参数即可（主题自己的前端用的是 `suffix`，两种它都认），
+  返回体是 `{"status":"1","data":"<图片URL>"}`
+
+主题里 `libs/Utils.php` 的校验逻辑（未加密，可直接读）：
+
+```php
+public static function IsTimeCodeCorrect($input, $is_old) {
+    $options = mget();
+    if ($options->time_code == "" || $options->time_code == "default") return false;  // ← 默认值直接失败
+    $encode_data = ($is_old) ? md5($options->time_code) : self::md5($options->time_code);
+    return $input === $encode_data;
+}
+public static function md5($data) {   // = 本插件的「加盐 md5」
+    return md5("handsome!@#$%^&*()-=+@#$%$" . $data . "handsome!@#$%^&*()-=+@#$%$@#$%^&*");
+}
+```
+
 ## 开发
 
 ```bash
@@ -140,3 +171,8 @@ pytest tests/          # 全部离线，不联网、不碰博客
 - `mixed_talk` 里图片用 `type=image` + 图片地址这一形态，是照微信版实现的，主题端渲染效果未经实机验证
 - 回复消息取图依赖适配器是否填充被引用消息的内容，取不到时请改用连续发送模式
 - 命令只认中文/英文别名，不含 markdown 之类的格式化（内容会原样发出去）
+- 主题真正处理 `action` 的派发逻辑在 `libs/interface/CoreInterface.php`，该文件是**加密**的
+  （文件头带著作权警告，本项目不会去破解它）。所以「主题按什么规则选哈希分支」只能靠
+  `/time_machine test` 实测反推，读源码读不到。校验函数和哈希算法本身在未加密的 `Utils.php` 里，够用
+- 插件的发送路径只支持 `crx+裸 md5` 和 `weixin+加盐` 两种组合。如果探测发现你的主题只认别的组合
+  （比如 `weixin+裸 md5`），插件目前发不出去，探测结论里会点明，告诉我我来适配

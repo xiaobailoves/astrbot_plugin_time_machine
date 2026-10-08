@@ -18,7 +18,16 @@ from astrbot.api import AstrBotConfig
 import astrbot.api.message_components as Comp
 
 from .src.buffer import BufferFull, BufferStore, ITEM_IMAGE, ITEM_TEXT
-from .src.client import MODE_AUTO, MODES, TimeMachineClient, TimeMachineError
+from .src.client import (
+    HASH_PLAIN,
+    HASH_SALTED,
+    MODE_AUTO,
+    MODE_HASH,
+    MODE_WEIXIN,
+    MODES,
+    TimeMachineClient,
+    TimeMachineError,
+)
 from .src.content import apply_secret, image_tag
 from .src.media import MediaError, to_data_url
 from .src.store import StateStore
@@ -44,6 +53,8 @@ HELP_NAMES = ("help", "帮助")
 # 一条说说最多带几张图，防止一次上传太多把博客拖垮
 MAX_IMAGES_PER_POST = 9
 
+HASH_LABEL = {HASH_PLAIN: "裸 md5", HASH_SALTED: "加盐 md5"}
+
 HELP_TEXT = """🕰️ 时光机插件
 
 /time_machine post <内容>    发一条说说，# 开头是私密说说
@@ -61,6 +72,34 @@ HELP_TEXT = """🕰️ 时光机插件
 def _reply_type() -> type | tuple:
     """拿 Comp.Reply 的类型。老版本没有这个组件时返回空元组，isinstance 永远为假。"""
     return getattr(Comp, "Reply", ())
+
+
+def _probe_conclusion(working: list[tuple[str, str]]) -> str:
+    """把探测结果翻译成人话，并指出微信服务端那条路能不能走"""
+    if not working:
+        return (
+            "结论：四种组合全都没过。先确认主题设置里的「时光机身份验证编码」"
+            "不是空的、也不是默认值 default——主题源码里这两个值会让校验直接失败。"
+        )
+
+    combos = "；".join(f"token={m} + {HASH_LABEL[h]}" for m, h in working)
+    text = f"结论：主题接受 {combos}。"
+
+    if any(MODE_HASH.get(m) == h for m, h in working):
+        text += "本插件正常工作在这个组合上。"
+    else:
+        text += "本插件的发送路径还不支持这些组合，跟我说一声我来适配。"
+
+    if (MODE_WEIXIN, HASH_SALTED) in working:
+        text += " 微信服务端（wechat_for_handsome）发的正是这组，可以直接用。"
+    else:
+        text += (
+            " 微信服务端（wechat_for_handsome）发的是「token=weixin + 加盐 md5」，"
+            "不在上面这些组合里，所以那条路目前走不通；"
+            f"想复活它，得把它的 cross.php 里的 token 改成 {working[0][0]}、"
+            f"time_code 换成{HASH_LABEL[working[0][1]]}那个值。"
+        )
+    return text
 
 
 def _looks_like_command(text: str) -> bool:
@@ -294,33 +333,25 @@ class TimeMachinePlugin(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @time_machine.command("test", alias=_sub_aliases(TEST_NAMES))
     async def test_command(self, event: AstrMessageEvent):
-        """探测身份校验走哪种 token 模式（不产生说说）"""
+        """探测主题认哪种 token / 哈希组合（不产生说说）"""
         if not self.client.configured:
             yield event.plain_result(
                 "⚠️ 还没配置好，缺少：" + "、".join(self.client.missing_fields())
             )
             return
 
-        yield event.plain_result("🔍 正在探测身份校验，会上传一张 1×1 的空白图（不会产生任何说说）……")
+        yield event.plain_result(
+            "🔍 正在探测四种组合，会上传 4 张 1×1 的空白图（不会产生任何说说）……"
+        )
         results = await self.client.probe()
 
-        lines = ["🧪 探测结果", f"地址：{self.blog_url}"]
-        for mode, ok, detail in results:
-            lines.append(f"{'✅' if ok else '❌'} token={mode}：{detail}")
-
-        ok_modes = [mode for mode, ok, _ in results if ok]
-        if ok_modes:
-            if self.client.mode_config in MODES:
-                lines.append(
-                    f"结论：{ok_modes[0]} 可用。配置里锁定了 {self.client.mode_config}，如需自动请改回 auto。"
-                )
-            else:
-                lines.append(f"结论：{ok_modes[0]} 可用，已写入缓存，之后都走这个模式。")
-        else:
+        lines = ["🧪 探测结果（token × 哈希）", f"地址：{self.blog_url}"]
+        for mode, hash_kind, ok, detail in results:
             lines.append(
-                "结论：两种模式都没通过。请检查验证编码是否正确、博客地址是否可访问，"
-                "以及主题版本是否支持这套接口（需要 Handsome 5.2.0+）。"
+                f"{'✅' if ok else '❌'} token={mode} + {HASH_LABEL[hash_kind]}：{detail}"
             )
+        lines.append("")
+        lines.append(_probe_conclusion([(m, h) for m, h, ok, _ in results if ok]))
         yield event.plain_result("\n".join(lines))
 
     @filter.permission_type(filter.PermissionType.ADMIN)

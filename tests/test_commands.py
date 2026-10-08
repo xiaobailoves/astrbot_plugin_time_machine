@@ -250,17 +250,49 @@ async def test_status_command_hides_code_and_shows_negotiated_mode():
     assert "时光机 cid：7" in body
 
 
-async def test_test_command_reports_probe_result():
+async def test_test_command_reports_all_four_combinations():
     plugin = make_plugin()
     plugin.client = FakeClient()
 
     out = await run(plugin.test_command(FakeEvent("/time_machine test")))
     body = texts(out)
 
-    assert "✅ token=crx" in body
-    assert "❌ token=weixin" in body
-    assert "crx 可用" in body
+    assert "✅ token=crx + 裸 md5" in body
+    assert "❌ token=crx + 加盐 md5" in body
+    assert "❌ token=weixin + 裸 md5" in body
+    assert "❌ token=weixin + 加盐 md5" in body
+    assert "本插件正常工作在这个组合上" in body
+    assert "走不通" in body  # 微信那条路要给出结论
     assert len(out) == 2  # 先回一句「正在探测」，再回结果
+
+
+# ── 探测结论翻译 ───────────────────────────────────────────
+
+
+def test_probe_conclusion_when_nothing_passes_mentions_the_default_trap():
+    text = main._probe_conclusion([])
+    assert "default" in text
+    assert "时光机身份验证编码" in text
+
+
+def test_probe_conclusion_notes_wechat_works_when_its_combo_passes():
+    text = main._probe_conclusion([("weixin", "salted")])
+    assert "可以直接用" in text
+    assert "本插件正常工作" in text
+
+
+def test_probe_conclusion_flags_unsupported_combination():
+    """weixin + 裸 md5 能过，但插件没有这种模式，要如实说明"""
+    text = main._probe_conclusion([("weixin", "plain")])
+    assert "还不支持" in text
+    assert "走不通" in text
+
+
+def test_probe_conclusion_names_the_fix_for_wechat_server():
+    text = main._probe_conclusion([("crx", "plain")])
+    assert "cross.php" in text
+    assert "token 改成 crx" in text
+    assert "裸 md5" in text
 
 
 async def test_test_command_refuses_unconfigured():

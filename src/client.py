@@ -28,6 +28,20 @@ MODE_WEIXIN = "weixin"
 MODE_AUTO = "auto"
 MODES = (MODE_CRX, MODE_WEIXIN)
 
+# 同一个编码在不同客户端会算成不同的哈希，主题端按 token 分流校验：
+#   crx    → md5(编码)            （Chrome 插件）
+#   weixin → md5(盐 + 编码 + 盐)   （微信服务端；主题里 Utils::md5() 就是这个实现）
+HASH_PLAIN = "plain"
+HASH_SALTED = "salted"
+
+# 各 token 默认搭配的哈希（照两份参考实现）
+MODE_HASH = {MODE_CRX: HASH_PLAIN, MODE_WEIXIN: HASH_SALTED}
+
+# 探测用：token × 哈希 的全部组合
+PROBE_COMBINATIONS = tuple(
+    (mode, kind) for mode in MODES for kind in (HASH_PLAIN, HASH_SALTED)
+)
+
 CODE_OK = "1"
 CODE_AUTH_FAILED = "-3"
 
@@ -71,8 +85,9 @@ def time_code_weixin(code: str) -> str:
     ).hexdigest()
 
 
-def make_time_code(code: str, mode: str) -> str:
-    return time_code_weixin(code) if mode == MODE_WEIXIN else time_code_crx(code)
+def make_time_code(code: str, hash_kind: str = HASH_PLAIN) -> str:
+    """按哈希算法算 time_code。hash_kind ∈ {HASH_PLAIN, HASH_SALTED}"""
+    return time_code_weixin(code) if hash_kind == HASH_SALTED else time_code_crx(code)
 
 
 def describe_code(raw: str) -> str:
@@ -236,10 +251,12 @@ class TimeMachineClient:
             raise TimeMachineError(f"博客返回 HTTP {status}", text[:300])
         return text
 
-    def _talk_params(self, mode: str, content: str, msg_type: str) -> dict:
+    def _talk_params(
+        self, mode: str, content: str, msg_type: str, hash_kind: str | None = None
+    ) -> dict:
         return {
             "action": "send_talk",
-            "time_code": make_time_code(self.timecode, mode),
+            "time_code": make_time_code(self.timecode, hash_kind or MODE_HASH.get(mode, HASH_PLAIN)),
             "token": mode,
             "cid": str(self.cid),
             "content": content,
@@ -247,10 +264,12 @@ class TimeMachineClient:
             "mediaId": "1",
         }
 
-    def _upload_params(self, mode: str, file_data: str, suffix: str) -> dict:
+    def _upload_params(
+        self, mode: str, file_data: str, suffix: str, hash_kind: str | None = None
+    ) -> dict:
         return {
             "action": "upload_img",
-            "time_code": make_time_code(self.timecode, mode),
+            "time_code": make_time_code(self.timecode, hash_kind or MODE_HASH.get(mode, HASH_PLAIN)),
             "token": mode,
             "file": file_data,
             "type": suffix,
@@ -294,31 +313,37 @@ class TimeMachineClient:
             logger.info(f"🔑 token 模式 {mode} 校验没过，换 {modes[idx + 1]} 再试")
         raise TimeMachineError(last_err, raw)
 
-    async def probe(self) -> list[tuple[str, bool, str]]:
-        """逐个模式探测身份校验是否通过，返回 [(模式, 是否通过, 说明)]。
+    async def probe(self) -> list[tuple[str, str, bool, str]]:
+        """把 token × 哈希 的四种组合各试一遍，返回 [(token, 哈希, 是否通过, 说明)]。
 
-        用 upload_img 传一张 1×1 的空白图来探路：既不会产生说说，
-        最坏也只是在博客 uploads 目录里留一张 1 像素的图片。
+        用 upload_img 传一张 1×1 的空白图探路：不会有说说产生，
+        最坏只是在博客 uploads 里留一张 1 像素的图片。
         """
-        results: list[tuple[str, bool, str]] = []
-        for mode in MODES:
+        results: list[tuple[str, str, bool, str]] = []
+        for mode, hash_kind in PROBE_COMBINATIONS:
             try:
                 raw = (
                     await self._post(
-                        self._upload_params(mode, PROBE_PNG_DATA_URL, ".png")
+                        self._upload_params(mode, PROBE_PNG_DATA_URL, ".png", hash_kind)
                     )
                 ).strip()
             except TimeMachineError as e:
-                results.append((mode, False, str(e)))
+                results.append((mode, hash_kind, False, str(e)))
                 continue
+
             ok, url, err = parse_upload_response(raw)
             if ok:
-                self._remember_mode(mode)
-                results.append((mode, True, f"通过（探测图：{url}）"))
+                # 只有和插件支持的某个模式对得上的组合才值得缓存
+                if MODE_HASH.get(mode) == hash_kind:
+                    self._remember_mode(mode)
+                results.append((mode, hash_kind, True, f"通过（探测图：{url}）"))
             elif is_auth_failure(raw):
-                results.append((mode, False, "身份校验失败（-3）"))
+                results.append((mode, hash_kind, False, "身份校验失败（-3）"))
             else:
-                # 不是 -3，说明身份这关已经过了，问题出在别处
-                self._remember_mode(mode)
-                results.append((mode, True, f"身份校验通过，但接口另有问题：{err}"))
+                # 不是 -3，说明身份这关过了，问题出在别的参数上
+                if MODE_HASH.get(mode) == hash_kind:
+                    self._remember_mode(mode)
+                results.append(
+                    (mode, hash_kind, True, f"身份校验通过，但接口另有问题：{err}")
+                )
         return results

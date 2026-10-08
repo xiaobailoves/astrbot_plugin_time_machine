@@ -6,9 +6,13 @@
 import pytest
 
 from src.client import (
+    HASH_PLAIN,
+    HASH_SALTED,
     MODE_AUTO,
     MODE_CRX,
+    MODE_HASH,
     MODE_WEIXIN,
+    PROBE_COMBINATIONS,
     WEIXIN_SALT_PREFIX,
     WEIXIN_SALT_SUFFIX,
     TimeMachineClient,
@@ -85,9 +89,21 @@ def test_weixin_mode_wraps_code_with_salts():
     assert time_code_weixin("abc") != time_code_crx("abc")
 
 
-def test_make_time_code_dispatches_by_mode():
-    assert make_time_code("abc", MODE_CRX) == time_code_crx("abc")
-    assert make_time_code("abc", MODE_WEIXIN) == time_code_weixin("abc")
+def test_make_time_code_dispatches_by_hash_kind():
+    assert make_time_code("abc", HASH_PLAIN) == time_code_crx("abc")
+    assert make_time_code("abc", HASH_SALTED) == time_code_weixin("abc")
+    assert make_time_code("abc") == time_code_crx("abc")  # 默认裸 md5
+
+
+def test_mode_hash_mapping_follows_the_two_reference_implementations():
+    """crx 配裸 md5、weixin 配加盐——这是两份参考实现各自的组合"""
+    assert MODE_HASH == {MODE_CRX: HASH_PLAIN, MODE_WEIXIN: HASH_SALTED}
+    assert set(PROBE_COMBINATIONS) == {
+        (MODE_CRX, HASH_PLAIN),
+        (MODE_CRX, HASH_SALTED),
+        (MODE_WEIXIN, HASH_PLAIN),
+        (MODE_WEIXIN, HASH_SALTED),
+    }
 
 
 def test_non_ascii_code_is_utf8_encoded():
@@ -232,6 +248,69 @@ async def test_upload_image_raises_on_theme_error():
     with pytest.raises(TimeMachineError) as exc:
         await client.upload_image("data:image/png;base64,AAAA")
     assert "参数错误" in str(exc.value)
+
+
+# ── 四组合探测 ─────────────────────────────────────────────
+
+PROBE_FAIL = '{"status":"-3"}'
+PROBE_OK = '{"status":"1","data":"https://blog/u/p.png"}'
+
+
+async def test_probe_tries_token_times_hash_in_order():
+    client = StubClient([PROBE_FAIL, PROBE_FAIL, PROBE_OK, PROBE_FAIL])
+
+    results = await client.probe()
+
+    assert [c["token"] for c in client.calls] == [MODE_CRX, MODE_CRX, MODE_WEIXIN, MODE_WEIXIN]
+    assert [(r[0], r[1]) for r in results] == list(PROBE_COMBINATIONS)
+    assert [r[2] for r in results] == [False, False, True, False]
+    assert "https://blog/u/p.png" in results[2][3]
+
+
+async def test_probe_sends_the_right_hash_for_each_combination():
+    client = StubClient([PROBE_FAIL] * 4)
+
+    await client.probe()
+
+    plain = time_code_crx("SECRET")
+    salted = time_code_weixin("SECRET")
+    assert [c["time_code"] for c in client.calls] == [plain, salted, plain, salted]
+    assert all(c["action"] == "upload_img" for c in client.calls)
+
+
+async def test_probe_treats_non_auth_errors_as_a_passed_check():
+    """不是 -3 就说明身份这关过了，问题出在别的参数上"""
+    client = StubClient([PROBE_FAIL, PROBE_FAIL, PROBE_FAIL, '{"status":"-2"}'])
+
+    results = await client.probe()
+
+    assert results[3][2] is True
+    assert "身份校验通过" in results[3][3]
+
+
+async def test_probe_caches_a_supported_combination():
+    client = StubClient([PROBE_OK, PROBE_FAIL, PROBE_FAIL, PROBE_FAIL], token_mode=MODE_AUTO)
+    await client.probe()
+    assert client.detected_mode == MODE_CRX
+
+
+async def test_probe_does_not_cache_an_unsupported_combination():
+    """weixin + 裸 md5 虽然能过，但插件没有这种模式，不该写进缓存"""
+    client = StubClient([PROBE_FAIL, PROBE_FAIL, PROBE_OK, PROBE_FAIL], token_mode=MODE_AUTO)
+    await client.probe()
+    assert client.detected_mode == ""
+
+
+async def test_probe_reports_transport_errors_per_combination():
+    """请求发不出去时，四种组合各自报错，而不是整体崩掉"""
+    client = TimeMachineClient(blog_url="", timecode="", cid=0)  # 未配置：_post 直接抛错
+
+    results = await client.probe()
+
+    assert len(results) == 4
+    assert [(r[0], r[1]) for r in results] == list(PROBE_COMBINATIONS)
+    assert all(r[2] is False for r in results)
+    assert "还没配置好" in results[0][3]
 
 
 # ── 配置自检 ───────────────────────────────────────────────

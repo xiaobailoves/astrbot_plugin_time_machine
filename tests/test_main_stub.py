@@ -371,8 +371,10 @@ class FakeClient:
 
     async def probe(self):
         return [
-            ("crx", True, "通过（探测图：https://blog.example.com/u/p.png）"),
-            ("weixin", False, "身份校验失败（-3）"),
+            ("crx", "plain", True, "通过（探测图：https://blog.example.com/u/p.png）"),
+            ("crx", "salted", False, "身份校验失败（-3）"),
+            ("weixin", "plain", False, "身份校验失败（-3）"),
+            ("weixin", "salted", False, "身份校验失败（-3）"),
         ]
 
 
